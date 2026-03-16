@@ -33,6 +33,7 @@ Check the prerequisites before you start to ensure you have the necessary softwa
 #### Software
 
 - Linux Ubuntu 22.04 LTS releases and later
+- Node.js 20+ and npm 10+ (the installer recommends Node.js 22)
 - Docker installed and running
 - [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) installed
 
