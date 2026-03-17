@@ -125,6 +125,7 @@ install_nemoclaw() {
     npm install && npm link
   else
     info "Installing NemoClaw from npm…"
+    # Revert once https://github.com/NVIDIA/NemoClaw/issues/71 is complete and the package is published
     npm install -g git+ssh://git@github.com/nvidia/NemoClaw.git
   fi
 }
