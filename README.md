@@ -1,226 +1,416 @@
-# NVIDIA NemoClaw: OpenClaw Plugin for OpenShell
+# NemoClaw on Equinix — Distributed AI Hub Integration
 
-<!-- start-badges -->
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue)](https://github.com/NVIDIA/NemoClaw/blob/main/LICENSE)
-[![Security Policy](https://img.shields.io/badge/Security-Report%20a%20Vulnerability-red)](https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md)
-[![Project Status](https://img.shields.io/badge/status-alpha-orange)](https://github.com/NVIDIA/NemoClaw/blob/main/docs/about/release-notes.md)
-<!-- end-badges -->
+> Deploy NVIDIA NemoClaw with OpenShell security sandbox, routing inference through a self-hosted LiteLLM gateway on Equinix infrastructure.
 
-NVIDIA NemoClaw is an open source stack that simplifies running [OpenClaw](https://openclaw.ai) always-on assistants safely. It installs the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime, part of [NVIDIA Agent Toolkit](https://docs.nvidia.com/nemo/agent-toolkit/latest), a secure environment for running autonomous agents, with inference routed through [NVIDIA cloud](https://build.nvidia.com).
-
-> **Alpha software**
-> 
-> NemoClaw is early-stage. Expect rough edges. We are building toward production-ready sandbox orchestration, but the starting point is getting your own environment up and running.
-> Interfaces, APIs, and behavior may change without notice as we iterate on the design.
-> The project is shared to gather feedback and enable early experimentation, but it
-> should not yet be considered production-ready.
-> We welcome issues and discussion from the community while the project evolves.
+[![NemoClaw](https://img.shields.io/badge/NemoClaw-0.1.0-76b900)](https://github.com/NVIDIA/NemoClaw)
+[![OpenClaw](https://img.shields.io/badge/OpenClaw-2026.3.11-orange)](https://openclaw.ai)
+[![LiteLLM](https://img.shields.io/badge/LiteLLM-latest-blue)](https://github.com/BerriAI/litellm)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue)](LICENSE)
 
 ---
 
-## Quick Start
+## Overview
 
-Follow these steps to get started with NemoClaw and your first sandboxed OpenClaw agent.
+This repo documents how to deploy [NVIDIA NemoClaw](https://github.com/NVIDIA/NemoClaw) on Equinix infrastructure and connect its inference layer to a self-hosted [LiteLLM](https://github.com/BerriAI/litellm) gateway — replacing the default NVIDIA Cloud API with your own model routing, spend tracking, and observability stack.
 
-> **ℹ️ Note**
->
-> NemoClaw creates a fresh OpenClaw instance inside the sandbox during onboarding.
-
-<!-- start-quickstart-guide -->
-
-### Prerequisites
-
-Check the prerequisites before you start to ensure you have the necessary software and hardware to run NemoClaw.
-
-#### Hardware
-
-| Resource | Minimum        | Recommended      |
-|----------|----------------|------------------|
-| CPU      | 4 vCPU         | 4+ vCPU          |
-| RAM      | 8 GB           | 16 GB            |
-| Disk     | 20 GB free     | 40 GB free       |
-
-The sandbox image is approximately 2.4 GB compressed. During image push, the Docker daemon, k3s, and the OpenShell gateway run alongside the export pipeline, which buffers decompressed layers in memory. On machines with less than 8 GB of RAM, this combined usage can trigger the OOM killer. If you cannot add memory, configuring at least 8 GB of swap can work around the issue at the cost of slower performance.
-
-#### Software
-
-| Dependency | Version                          |
-|------------|----------------------------------|
-| Linux      | Ubuntu 22.04 LTS or later |
-| Node.js    | 20 or later |
-| npm        | 10 or later |
-| Container runtime | Supported runtime installed and running |
-| [OpenShell](https://github.com/NVIDIA/OpenShell) | Installed |
-
-#### Container Runtime Support
-
-| Platform | Supported runtimes | Notes |
-|----------|--------------------|-------|
-| Linux | Docker | Primary supported path today |
-| macOS (Apple Silicon) | Colima, Docker Desktop | Recommended runtimes for supported macOS setups |
-| macOS | Podman | Not supported yet. NemoClaw currently depends on OpenShell support for Podman on macOS. |
-| Windows WSL | Docker Desktop (WSL backend) | Supported target path |
-
-> **💡 Tip**
->
-> For DGX Spark, follow the [DGX Spark setup guide](https://github.com/NVIDIA/NemoClaw/blob/main/spark-install.md). It covers Spark-specific prerequisites, such as cgroup v2 and Docker configuration, before running the standard installer.
-
-### Install NemoClaw and Onboard OpenClaw Agent
-
-Download and run the installer script.
-The script installs Node.js if it is not already present, then runs the guided onboard wizard to create a sandbox, configure inference, and apply security policies.
-
-```console
-$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
-```
-
-If you use nvm or fnm to manage Node.js, the installer may not update your current shell's PATH.
-If `nemoclaw` is not found after install, run `source ~/.bashrc` (or `source ~/.zshrc` for zsh) or open a new terminal.
-
-When the install completes, a summary confirms the running environment:
+### Architecture
 
 ```
-──────────────────────────────────────────────────
-Sandbox      my-assistant (Landlock + seccomp + netns)
-Model        nvidia/nemotron-3-super-120b-a12b (NVIDIA Cloud API)
-──────────────────────────────────────────────────
-Run:         nemoclaw my-assistant connect
-Status:      nemoclaw my-assistant status
-Logs:        nemoclaw my-assistant logs --follow
-──────────────────────────────────────────────────
-
-[INFO]  === Installation complete ===
+VM2 — NemoClaw (this repo)          VM1 — Distributed AI Hub
+┌─────────────────────────┐         ┌──────────────────────────┐
+│  OpenShell Gateway      │         │  LiteLLM Proxy :4000     │
+│  └── k3s cluster        │         │  └── AWS Bedrock         │
+│       └── Sandbox pod   │─────────│  └── Groq                │
+│            └── OpenClaw │  VLAN   │  └── Azure OpenAI        │
+│                 agent   │ private │                          │
+│                         │         │  Langfuse :3000          │
+│  NGINX reverse proxy    │         │  Qdrant :6333            │
+│  svclaw.yourdomain.com  │         └──────────────────────────┘
+└─────────────────────────┘
 ```
 
-### Chat with the Agent
-
-Connect to the sandbox, then chat with the agent through the TUI or the CLI.
-
-```console
-$ nemoclaw my-assistant connect
-```
-
-#### OpenClaw TUI
-
-The OpenClaw TUI opens an interactive chat interface. Type a message and press Enter to send it to the agent:
-
-```console
-sandbox@my-assistant:~$ openclaw tui
-```
-
-Send a test message to the agent and verify you receive a response.
-
-> **ℹ️ Note**
->
-> The TUI is best for interactive back-and-forth. If you need the full text of a long response (for example, large code generation output), use the CLI instead:
->
-> ```console
-> sandbox@my-assistant:~$ openclaw agent --agent main --local -m "<prompt>" --session-id <id>
-> ```
->
-> This prints the complete response directly in the terminal and avoids relying on the TUI view for long output.
-
-#### OpenClaw CLI
-
-Use the OpenClaw CLI to send a single message and print the response:
-
-```console
-sandbox@my-assistant:~$ openclaw agent --agent main --local -m "hello" --session-id test
-```
-
-<!-- end-quickstart-guide -->
+**Traffic flow:**
+1. OpenClaw agent → inference.local/v1 (virtual endpoint)
+2. OpenShell egress proxy intercepts → checks policy → allows if allowlisted
+3. Forwards to LiteLLM proxy on VM1 (private VLAN IP)
+4. LiteLLM routes to target LLM, logs trace to Langfuse
+5. Response returns to agent
 
 ---
 
-## How It Works
+## Prerequisites
 
-NemoClaw installs the NVIDIA OpenShell runtime and Nemotron models, then uses a versioned blueprint to create a sandboxed environment where every network request, file access, and inference call is governed by declarative policy. The `nemoclaw` CLI orchestrates the full stack: OpenShell gateway, sandbox, inference provider, and network policy.
+### VM2 (NemoClaw host)
+- Ubuntu 22.04 LTS
+- 4 vCPU, **8GB RAM** (4GB works but is unstable), 64GB disk
+- Docker installed
+- Node.js 22+ (OpenClaw requires `>=22.16.0`)
+- Connected to same VLAN as VM1
 
-| Component        | Role                                                                                      |
-|------------------|-------------------------------------------------------------------------------------------|
-| **Plugin**       | TypeScript CLI commands for launch, connect, status, and logs.                            |
-| **Blueprint**    | Versioned Python artifact that orchestrates sandbox creation, policy, and inference setup. |
-| **Sandbox**      | Isolated OpenShell container running OpenClaw with policy-enforced egress and filesystem.  |
-| **Inference**    | NVIDIA cloud model calls, routed through the OpenShell gateway, transparent to the agent.  |
-
-The blueprint lifecycle follows four stages: resolve the artifact, verify its digest, plan the resources, and apply through the OpenShell CLI.
-
-When something goes wrong, errors may originate from either NemoClaw or the OpenShell layer underneath. Run `nemoclaw <name> status` for NemoClaw-level health and `openshell sandbox list` to check the underlying sandbox state.
-
----
-
-## Inference
-
-Inference requests from the agent never leave the sandbox directly. OpenShell intercepts every call and routes it to the NVIDIA cloud provider.
-
-| Provider     | Model                               | Use Case                                       |
-|--------------|--------------------------------------|-------------------------------------------------|
-| NVIDIA cloud | `nvidia/nemotron-3-super-120b-a12b` | Production. Requires an NVIDIA API key.         |
-
-Get an API key from [build.nvidia.com](https://build.nvidia.com). The `nemoclaw onboard` command prompts for this key during setup.
-
-Local inference options such as Ollama and vLLM are still experimental. On macOS, they also depend on OpenShell host-routing support in addition to the local service itself being reachable on the host.
+### VM1 (LiteLLM / Distributed AI Hub)
+- Existing LiteLLM stack running on port 4000
+- LiteLLM master key available
+- Port 4000 accessible from VM2's VLAN IP
 
 ---
 
-## Protection Layers
+## Installation
 
-The sandbox starts with a strict baseline policy that controls network egress and filesystem access:
+### 1. Base dependencies
 
-| Layer      | What it protects                                    | When it applies             |
-|------------|-----------------------------------------------------|-----------------------------|
-| Network    | Blocks unauthorized outbound connections.           | Hot-reloadable at runtime.  |
-| Filesystem | Prevents reads/writes outside `/sandbox` and `/tmp`.| Locked at sandbox creation. |
-| Process    | Blocks privilege escalation and dangerous syscalls. | Locked at sandbox creation. |
-| Inference  | Reroutes model API calls to controlled backends.    | Hot-reloadable at runtime.  |
+```bash
+sudo apt update && sudo apt upgrade -y
 
-When the agent tries to reach an unlisted host, OpenShell blocks the request and surfaces it in the TUI for operator approval.
+# Docker
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER && newgrp docker
+
+# Node.js 22 (required — system default is too old)
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt install -y nodejs
+node -v  # must be v22.x.x
+```
+
+### 2. Clone and build NemoClaw
+
+```bash
+git clone https://github.com/NVIDIA/NemoClaw.git
+cd NemoClaw
+
+# Apply remote dashboard fix (PR #114 — not yet merged upstream)
+git remote add deepujain https://github.com/deepujain/NemoClaw.git
+git fetch deepujain fix/20-remote-dashboard-bind
+git cherry-pick deepujain/fix/20-remote-dashboard-bind
+
+# Fix Dockerfile to include write-openclaw-gateway-config.py
+sed -i 's|COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start|COPY scripts/ /usr/local/bin/\nCOPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start|' Dockerfile
+
+# Build TypeScript CLI
+cd nemoclaw && npm install && npm run build && cd ..
+
+# Install globally
+sudo npm link
+nemoclaw help  # verify install
+```
+
+### 3. Configure network policy
+
+Before onboarding, add your LiteLLM endpoint to the sandbox policy:
+
+```bash
+cat >> ~/NemoClaw/nemoclaw-blueprint/policies/openclaw-sandbox.yaml << 'EOF'
+  litellm_full:
+    name: litellm_full
+    endpoints:
+      - host: <VM1-VLAN-IP>       # e.g. 192.168.x.x
+        port: 4000
+        access: full
+    binaries:
+      - { path: /usr/local/bin/openclaw }
+      - { path: /usr/bin/curl }
+      - { path: /usr/local/bin/node }
+  wttr:
+    name: wttr
+    endpoints:
+      - host: wttr.in
+        port: 443
+        access: full
+    binaries:
+      - { path: /usr/local/bin/openclaw }
+      - { path: /usr/bin/curl }
+EOF
+```
+
+> ⚠️ **Critical**: Network policies are locked at sandbox creation. You cannot add `network_policies` to a live sandbox without recreating it. Always update `openclaw-sandbox.yaml` before running `nemoclaw onboard`.
+
+### 4. Run onboard wizard
+
+```bash
+nemoclaw onboard
+# When asked for sandbox name: svclaw (or your preferred name)
+# When asked for inference provider: select NVIDIA Cloud (we override this next)
+```
+
+### 5. Set LiteLLM as inference provider
+
+> ⚠️ Run this **immediately** after onboard — onboard always resets inference to nvidia-nim.
+
+```bash
+# Create LiteLLM provider
+openshell provider create \
+  --name litellm \
+  --type openai \
+  --credential "api_key=<LITELLM_MASTER_KEY>" \
+  --config "base_url=http://<VM1-VLAN-IP>:4000"
+
+# Set as active inference route
+openshell inference set \
+  --provider litellm \
+  --model groq/openai/gpt-oss-20b \
+  --no-verify
+
+# Verify
+openshell inference get
+```
+
+### 6. Fix openclaw.json inside sandbox
+
+The sandbox image hardcodes NVIDIA as the provider. Update it:
+
+```bash
+nemoclaw svclaw connect
+
+# Inside sandbox — run this Python script:
+python3 << 'EOF'
+import json
+with open('/sandbox/.openclaw/openclaw.json', 'r') as f:
+    config = json.load(f)
+
+LITELLM_IP = "<VM1-VLAN-IP>"
+LITELLM_KEY = "<LITELLM_MASTER_KEY>"
+MODEL = "groq/openai/gpt-oss-20b"
+
+config['models']['providers'] = {
+    'litellm': {
+        'baseUrl': f'http://{LITELLM_IP}:4000',
+        'apiKey': LITELLM_KEY,
+        'api': 'openai-completions',
+        'models': [{
+            'id': MODEL,
+            'name': 'GPT OSS 20B via LiteLLM',
+            'reasoning': False,
+            'input': ['text'],
+            'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0},
+            'contextWindow': 131072,
+            'maxTokens': 4096
+        }]
+    }
+}
+config['agents']['defaults']['model']['primary'] = f'litellm/{MODEL}'
+config['agents']['defaults']['models'] = {f'litellm/{MODEL}': {}}
+
+with open('/sandbox/.openclaw/openclaw.json', 'w') as f:
+    json.dump(config, f, indent=2)
+print('done')
+EOF
+```
+
+### 7. Test inference
+
+```bash
+# Still inside sandbox
+openclaw agent --agent main --local \
+  -m "what is 2+2?" \
+  --session-id test1
+```
+
+Check LiteLLM dashboard on VM1 to confirm the request was logged with spend tracking.
 
 ---
 
-## Key Commands
+## Remote Web UI (Control Dashboard)
 
-### Host commands (`nemoclaw`)
+OpenClaw's web UI runs inside the sandbox on port 18789.
 
-Run these on the host to set up, connect to, and manage sandboxes.
+### Setup (one-time)
 
-| Command                              | Description                                            |
-|--------------------------------------|--------------------------------------------------------|
-| `nemoclaw onboard`                  | Interactive setup wizard: gateway, providers, sandbox. |
-| `nemoclaw <name> connect`            | Open an interactive shell inside the sandbox.          |
-| `openshell term`                     | Launch the OpenShell TUI for monitoring and approvals. |
-| `nemoclaw start` / `stop` / `status` | Manage auxiliary services (Telegram bridge, tunnel).   |
+**Inside sandbox** — start gateway bound to all interfaces:
+```bash
+openclaw gateway stop 2>/dev/null; sleep 1
+openclaw gateway --port 18789 --bind lan &
+```
 
-### Plugin commands (`openclaw nemoclaw`)
+Also add your domain to `allowedOrigins` in `/sandbox/.openclaw/openclaw.json`:
+```json
+"gateway": {
+  "controlUi": {
+    "allowedOrigins": [
+      "http://127.0.0.1:18789",
+      "https://your-domain.com"
+    ],
+    "allowInsecureAuth": true,
+    "dangerouslyDisableDeviceAuth": true
+  }
+}
+```
 
-Run these inside the OpenClaw CLI. These commands are under active development and may not all be functional yet.
+**On VM host** — forward port with 0.0.0.0 bind:
+```bash
+openshell forward start 0.0.0.0:18789 svclaw -d
+```
 
-| Command                                    | Description                                              |
-|--------------------------------------------|----------------------------------------------------------|
-| `openclaw nemoclaw launch [--profile ...]` | Bootstrap OpenClaw inside an OpenShell sandbox.          |
-| `openclaw nemoclaw status`                 | Show sandbox health, blueprint state, and inference.     |
-| `openclaw nemoclaw logs [-f]`              | Stream blueprint execution and sandbox logs.             |
+**NGINX config** (on your reverse proxy VM):
+```nginx
+server {
+    listen 443 ssl;
+    server_name svclaw.yourdomain.com;
 
-See the full [CLI reference](https://docs.nvidia.com/nemoclaw/latest/reference/commands.md) for all commands, flags, and options.
+    location / {
+        proxy_pass http://<VM2-VLAN-IP>:18789;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
 
-> **Known limitations:**
-> - The `openclaw nemoclaw` plugin commands are under active development. Use the `nemoclaw` host CLI as the primary interface.
-> - Setup may require manual workarounds on some platforms. File an issue if you encounter blockers.
+### Access
+
+Get your token:
+```bash
+grep '"token"' /sandbox/.openclaw/openclaw.json
+```
+
+Open in browser (use `#token=` format due to [known bug #39611](https://github.com/openclaw/openclaw/issues/39611)):
+```
+https://your-domain.com/#token=<your-gateway-token>
+```
 
 ---
 
-## Learn More
+## Model Selection
 
-Refer to the documentation for more information on NemoClaw.
+Not all models work with OpenClaw. Known working models via LiteLLM:
 
-- [Overview](https://docs.nvidia.com/nemoclaw/latest/about/overview.html): what NemoClaw does and how it fits together
-- [How It Works](https://docs.nvidia.com/nemoclaw/latest/about/how-it-works.html): plugin, blueprint, and sandbox lifecycle
-- [Architecture](https://docs.nvidia.com/nemoclaw/latest/reference/architecture.html): plugin structure, blueprint lifecycle, and sandbox environment
-- [Inference Profiles](https://docs.nvidia.com/nemoclaw/latest/reference/inference-profiles.html): NVIDIA cloud inference configuration
-- [Network Policies](https://docs.nvidia.com/nemoclaw/latest/reference/network-policies.html): egress control and policy customization
-- [CLI Commands](https://docs.nvidia.com/nemoclaw/latest/reference/commands.html): full command reference
-- [Troubleshooting](https://docs.nvidia.com/nemoclaw/latest/reference/troubleshooting.html): common issues and resolution steps
+| Model | Provider | Notes |
+|-------|----------|-------|
+| `us.amazon.nova-lite-v1:0` | AWS Bedrock | ✅ Stable, recommended |
+| `us.amazon.nova-pro-v1:0` | AWS Bedrock | ✅ Higher quality |
+| `groq/llama-3.3-70b-versatile` | Groq | ⚠️ tool_use_failed occasionally |
+| `groq/openai/gpt-oss-20b` | Groq | ❌ reasoning_content error |
+| `groq/openai/gpt-oss-120b` | Groq | ❌ reasoning_content error |
+| `us.anthropic.claude-sonnet-4-6` | AWS Bedrock | ⚠️ Sometimes hangs |
+
+**Avoid models with `reasoning: true`** — Groq rejects `reasoning_content` in message history.
+
+To change model inside sandbox:
+```bash
+python3 << 'EOF'
+import json
+MODEL = "us.amazon.nova-lite-v1:0"  # change this
+with open('/sandbox/.openclaw/openclaw.json', 'r') as f:
+    config = json.load(f)
+config['models']['providers']['litellm']['models'][0]['id'] = MODEL
+config['agents']['defaults']['model']['primary'] = f'litellm/{MODEL}'
+config['agents']['defaults']['models'] = {f'litellm/{MODEL}': {}}
+with open('/sandbox/.openclaw/openclaw.json', 'w') as f:
+    json.dump(config, f, indent=2)
+print('done')
+EOF
+```
+
+---
+
+## Known Issues & Workarounds
+
+| Issue | Workaround |
+|-------|-----------|
+| `openshell inference set` ignores `base_url` | Hardcode `baseUrl` + `apiKey` directly in sandbox `openclaw.json` |
+| `nemoclaw onboard` resets inference to nvidia-nim | Re-run `openshell inference set` immediately after every onboard |
+| Cannot add network_policies to live sandbox | Update `openclaw-sandbox.yaml` before onboard, then recreate sandbox |
+| network_policies YAML schema undocumented | Use `access: full` (not `protocol: rest`) for HTTP endpoints |
+| Gateway TLS cert BadSignature after restart | `openshell gateway stop && openshell gateway start` |
+| Session file locked | `rm -f /sandbox/.openclaw/agents/main/sessions/*.lock` |
+| "device identity required" in Control UI | Use `#token=` URL format (not `?token=`). See [#39611](https://github.com/openclaw/openclaw/issues/39611) |
+| k3s instability / sandbox provisioning timeout | Upgrade to 8GB RAM. Retry `nemoclaw onboard` after clean state |
+| `reasoning_content` error with Groq models | Use non-reasoning models (Nova Lite, Llama 3.3) |
+| Node.js too old (system default 12) | Use NodeSource `setup_22.x` — requires Node 22+ |
+
+### Full state reset (nuclear option)
+
+```bash
+docker stop $(docker ps -q --filter "name=openshell") 2>/dev/null
+docker rm $(docker ps -aq --filter "name=openshell") 2>/dev/null
+docker volume rm $(docker volume ls -q --filter "name=openshell") 2>/dev/null
+rm -rf ~/.config/openshell/ ~/.nemoclaw/
+nemoclaw onboard
+```
+
+---
+
+## Post-Onboard Checklist
+
+Every time you run `nemoclaw onboard`, complete these steps:
+
+```bash
+# 1. Set inference provider
+openshell inference set \
+  --provider litellm \
+  --model us.amazon.nova-lite-v1:0 \
+  --no-verify
+
+# 2. Apply network policy
+openshell policy set svclaw \
+  --policy ~/NemoClaw/nemoclaw-blueprint/policies/openclaw-sandbox.yaml \
+  --wait
+
+# 3. Connect and fix openclaw.json
+nemoclaw svclaw connect
+# Run the Python fix script (see Installation step 6)
+
+# 4. Start gateway for web UI
+openclaw gateway --port 18789 --bind lan &
+
+# 5. Forward port
+# (from VM host, separate terminal)
+openshell forward start 0.0.0.0:18789 svclaw -d
+```
+
+---
+
+## Architecture Notes
+
+### Why a separate VM?
+
+NemoClaw's OpenShell runtime uses k3s (lightweight Kubernetes) inside Docker, requiring `SYS_ADMIN` + `NET_ADMIN` capabilities and Docker socket access. Running this on the same VM as your LiteLLM stack creates unacceptable security risks — a NemoClaw container would have full Docker daemon control over your production stack.
+
+### Two-layer security model
+
+```
+Layer 1 — OpenShell (software):
+  Agent-level policy enforcement
+  Egress allowlist via YAML
+  Inference credential injection
+  Filesystem confinement (/sandbox, /tmp only)
+
+Layer 2 — Equinix Fabric (network):
+  Private VLAN connectivity
+  NemoClaw ↔ LiteLLM traffic never hits public internet
+  LiteLLM port 4000 not exposed externally
+```
+
+### OpenShell component map
+
+```
+openshell gateway (Docker container)
+  └── k3s cluster
+        ├── openshell pod (gateway control plane, gRPC :8080)
+        └── svclaw pod (sandbox)
+              ├── OpenClaw agent (Node.js)
+              ├── NemoClaw plugin (/opt/nemoclaw)
+              ├── Egress proxy (Squid :3128) ← intercepts all outbound traffic
+              └── inference.local ← virtual endpoint, intercepted by OpenShell
+```
+
+---
+
+## References
+
+- [NVIDIA NemoClaw](https://github.com/NVIDIA/NemoClaw)
+- [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell)
+- [NemoClaw Docs](https://docs.nvidia.com/nemoclaw/latest/)
+- [OpenShell Docs](https://docs.nvidia.com/openshell/latest/)
+- [OpenClaw](https://github.com/openclaw/openclaw)
+- [PR #114 — Remote dashboard bind fix](https://github.com/NVIDIA/NemoClaw/pull/114)
+- [Issue #39611 — device identity required bug](https://github.com/openclaw/openclaw/issues/39611)
+- [GTC 2026 NemoClaw announcement](https://nvidianews.nvidia.com/news/nvidia-announces-nemoclaw)
+
+---
 
 ## License
 
-This project is licensed under the [Apache License 2.0](LICENSE).
+Apache 2.0 — same as upstream NemoClaw.
