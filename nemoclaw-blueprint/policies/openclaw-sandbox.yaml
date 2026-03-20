@@ -165,3 +165,22 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/bot*/**" }
           - allow: { method: POST, path: "/bot*/**" }
+  litellm_full:
+    name: litellm_full
+    endpoints:
+      - host: 64.191.201.100
+        port: 4000
+        access: full
+    binaries:
+      - { path: /usr/local/bin/openclaw }
+      - { path: /usr/bin/curl }
+      - { path: /usr/local/bin/node }
+  wttr:
+    name: wttr
+    endpoints:
+      - host: wttr.in
+        port: 443
+        access: full
+    binaries:
+      - { path: /usr/local/bin/openclaw }
+      - { path: /usr/bin/curl }
